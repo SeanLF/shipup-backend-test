@@ -4,15 +4,7 @@ require 'date'
 include JsonFileManipulation
 
 def carriers_hash(carriers)
-  carriers_hash = {}
-  carriers.each do |carrier|
-    carriers_hash[carrier['code']] = {
-      delivery_promise: carrier['delivery_promise'],
-      saturday_deliveries: carrier['saturday_deliveries'],
-      oversea_delay_threshold: carrier['oversea_delay_threshold']
-    }
-  end
-  carriers_hash
+  carriers.map { |hash| [hash['code'], hash] }.to_h
 end
 
 def off_day?(date, saturday_deliveries)
@@ -31,35 +23,27 @@ def expected_delivery_date(shipping_date_string, required_working_days, saturday
   shipping_date
 end
 
-def oversea_delay(threshold, distance)
-  (distance / threshold.to_f).floor
+def country_distance(distances, origin, destination)
+  distances&.dig(origin)&.dig(destination) || 0
 end
 
-def main(input_file, output_file)
-  data = get_json_from_file(input_file)
-  output = {
-    deliveries: []
-  }
+def oversea_delay(threshold, distance)
+  (threshold || 1) / (distance || 0)
+end
 
-  carriers_hash = carriers_hash(data['carriers'])
-  packages = data['packages']
-  country_distances = data['country_distance']
+def expected_delivery_dates(carriers, packages, country_distances)
+  packages.map do |package|
+    carrier = carriers[package['carrier']]
 
-  output[:deliveries] = packages.map do |package|
-    carrier = carriers_hash[package['carrier']]
-
-    origin_country = package['origin_country']
-    destination_country = package['destination_country']
-    country_distance = country_distances[origin_country][destination_country] || 0
-
-    oversea_delay = oversea_delay(carrier[:oversea_delay_threshold], country_distance)
-
-    required_working_days = carrier[:delivery_promise] + oversea_delay
+    oversea_delay = oversea_delay(
+      carrier['oversea_delay_threshold'],
+      country_distance(country_distances, package['origin_country'], package['destination_country'])
+    )
 
     expected_delivery_date = expected_delivery_date(
       package['shipping_date'],
-      required_working_days,
-      carrier[:saturday_deliveries]
+      carrier['delivery_promise'] + oversea_delay,
+      carrier['saturday_deliveries']
     )
 
     {
@@ -68,9 +52,16 @@ def main(input_file, output_file)
       oversea_delay: oversea_delay
     }
   end
-  write_json_to_file(output, output_file)
 end
 
-input_file = 'data/input.json'
-output_file = 'data/output.json'
-main(input_file, output_file)
+def main(data)
+  {
+    deliveries: expected_delivery_dates(
+      carriers_hash(data['carriers']),
+      data['packages'],
+      data['country_distance']
+    )
+  }
+end
+
+write_json_to_file(main(get_json_from_file('data/input.json')), 'data/output.json')
